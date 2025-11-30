@@ -24,6 +24,7 @@ function App() {
   const [currentIndex, setCurrentIndex] = useState(0);
   const [isFlipped, setIsFlipped] = useState(false);
   const [masteredCount, setMasteredCount] = useState(0);
+  const [disableFlipAnimation, setDisableFlipAnimation] = useState(false);
 
   // Load data on mount
   useEffect(() => {
@@ -165,10 +166,16 @@ function App() {
     setStep('upload');
   };
 
+  const resetFlipWithoutAnimation = (callback = () => {}) => {
+    setDisableFlipAnimation(true);
+    setIsFlipped(false);
+    callback();
+    setTimeout(() => setDisableFlipAnimation(false), 0);
+  };
+
   const handleNext = () => {
     if (currentIndex < studySession.length - 1) {
-      setIsFlipped(false);
-      setTimeout(() => setCurrentIndex(prev => prev + 1), 150);
+      resetFlipWithoutAnimation(() => setCurrentIndex(prev => prev + 1));
     } else {
       // End of session
       if (confirm('Session complete! Return to Library?')) {
@@ -179,8 +186,7 @@ function App() {
 
   const handlePrev = () => {
     if (currentIndex > 0) {
-      setIsFlipped(false);
-      setTimeout(() => setCurrentIndex(prev => prev - 1), 150);
+      resetFlipWithoutAnimation(() => setCurrentIndex(prev => prev - 1));
     }
   };
 
@@ -206,12 +212,12 @@ function App() {
       // Move current card to end
       newSession.splice(currentIndex, 1);
       newSession.push(currentCard);
-      setStudySession(newSession);
-
-      if (currentIndex >= newSession.length) {
-        setCurrentIndex(newSession.length - 1);
-      }
-      setIsFlipped(false);
+      resetFlipWithoutAnimation(() => {
+        setStudySession(newSession);
+        if (currentIndex >= newSession.length) {
+          setCurrentIndex(newSession.length - 1);
+        }
+      });
       return;
     }
 
@@ -304,6 +310,7 @@ function App() {
             back={studySession[currentIndex].back}
             isFlipped={isFlipped}
             onFlip={() => setIsFlipped(!isFlipped)}
+            disableAnimation={disableFlipAnimation}
           />
 
           <Controls

@@ -183,6 +183,10 @@ h1 {
   box-shadow: var(--shadow-lg);
 }
 
+.flashcard.no-flip-animation {
+  transition: none;
+}
+
 .flashcard.flipped {
   transform: rotateY(180deg);
 }
