@@ -5,9 +5,13 @@ import ColumnMapper from './components/ColumnMapper';
 import Flashcard from './components/Flashcard';
 import Controls from './components/Controls';
 import Library from './components/Library';
+import Auth from './components/Auth';
 import { parseCSV } from './utils/csvParser';
 import { saveFlashcards, loadFlashcards, clearFlashcards } from './utils/storage';
+import { supabase } from './lib/supabase';
+import { cardService } from './services/cardService';
 import './App.css';
+
 // Import all CSV files from assets/data
 const csvFiles = import.meta.glob('./assets/data/*.csv', {
   query: '?raw',
@@ -17,7 +21,7 @@ const csvFiles = import.meta.glob('./assets/data/*.csv', {
 
 function App() {
   const [showLanding, setShowLanding] = useState(true);
-  const [step, setStep] = useState('loading'); // loading, library, upload, map, study
+  const [step, setStep] = useState('loading'); // loading, library, upload, map, study, auth
   const [csvData, setCsvData] = useState({ headers: [], data: [] });
   const [allFlashcards, setAllFlashcards] = useState([]);
   const [studySession, setStudySession] = useState([]); // Subset of cards for current session
@@ -26,71 +30,86 @@ function App() {
   const [masteredCount, setMasteredCount] = useState(0);
   const [disableFlipAnimation, setDisableFlipAnimation] = useState(false);
 
-  // Load data on mount
+  // Auth State
+  const [user, setUser] = useState(null);
+  const [authLoading, setAuthLoading] = useState(true);
+
+  // Check Auth on Mount
   useEffect(() => {
-    const localCards = loadFlashcards();
-    let initialCards = [...localCards];
-
-    // Load embedded CSVs
-    // Note: This is a simple merge. In a real app, we might want to track which file a card came from
-    // to avoid duplicates or updates. For now, we just append if not empty.
-    // However, simply appending every time will duplicate cards if we save back to local storage.
-    // Strategy: We will only use embedded data if local storage is empty OR we can treat embedded data as a separate "read-only" source.
-    // But user wants "sync". 
-    // Simplified approach: If local storage is empty, load ALL embedded files.
-    // If local storage has data, we assume it's the source of truth (user might have deleted cards).
-    // BUT user wants to see new files.
-    // Better approach: Load all embedded cards. Filter out ones that already exist in local storage (by content).
-
-    const embeddedCards = [];
-    Object.values(csvFiles).forEach(csvContent => {
-      const parsed = parseCSV(csvContent);
-      if (parsed.data.length > 0) {
-        // We assume standard columns for embedded files: Front, Back, Category (optional)
-        // Since we can't map columns for auto-loaded files easily without user interaction,
-        // we'll assume: Col 0 = Front, Col 1 = Back, Col 2 = Category (if exists)
-        // OR we just prompt user to map if it's the VERY first time.
-
-        // Let's try to be smart: Use first 2 columns.
-        const newCards = parsed.data.map(row => ({
-          id: Date.now() + Math.random().toString(36).substr(2, 9),
-          front: row[0] || '',
-          back: row[1] || '',
-          category: row[2] || 'Imported',
-          difficulty: null,
-          lastReviewed: null
-        })).filter(card => card.front && card.back);
-        embeddedCards.push(...newCards);
-      }
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setUser(session?.user ?? null);
+      setAuthLoading(false);
     });
 
-    if (localCards.length === 0 && embeddedCards.length > 0) {
-      // First time load
-      setAllFlashcards(embeddedCards);
-      setStep('library');
-    } else if (localCards.length > 0) {
-      // We have local data. 
-      // Ideally we merge new files. But detecting "new" is hard without IDs.
-      // For now, let's just show local data to be safe, or user can "Reset" to get new data.
-      // User request: "I upload 1.csv, 2.csv... I want to see them".
-      // Let's check if we should merge.
-      // A simple way: Check if the number of cards differs significantly or just append?
-      // Appending duplicates is bad.
-      // Let's stick to: Local Storage is King. 
-      // IF user wants to sync new files, they might need a "Reload from Files" button in Library.
-      setAllFlashcards(localCards);
-      setStep('library');
-    } else {
-      setStep('upload');
-    }
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      setUser(session?.user ?? null);
+    });
+
+    return () => subscription.unsubscribe();
   }, []);
 
-  // Save data whenever it changes
+  // Load data logic
   useEffect(() => {
-    if (step !== 'loading') {
+    if (authLoading) return;
+
+    const loadData = async () => {
+      if (user) {
+        // Cloud Mode
+        try {
+          const cloudCards = await cardService.getCards(user);
+          setAllFlashcards(cloudCards);
+          setStep('library');
+        } catch (error) {
+          console.error('Error loading cloud cards:', error);
+          alert('Failed to load cards from cloud');
+        }
+      } else {
+        // Local Mode
+        const localCards = loadFlashcards();
+
+        // Handle embedded files for first-time local users
+        if (localCards.length === 0) {
+          const embeddedCards = [];
+          Object.values(csvFiles).forEach(csvContent => {
+            const parsed = parseCSV(csvContent);
+            if (parsed.data.length > 0) {
+              const newCards = parsed.data.map(row => ({
+                id: Date.now() + Math.random().toString(36).substr(2, 9),
+                front: row[0] || '',
+                back: row[1] || '',
+                category: row[2] || 'Imported',
+                difficulty: null,
+                lastReviewed: null
+              })).filter(card => card.front && card.back);
+              embeddedCards.push(...newCards);
+            }
+          });
+
+          if (embeddedCards.length > 0) {
+            setAllFlashcards(embeddedCards);
+            setStep('library');
+            return;
+          }
+        }
+
+        if (localCards.length > 0) {
+          setAllFlashcards(localCards);
+          setStep('library');
+        } else {
+          setStep('upload');
+        }
+      }
+    };
+
+    loadData();
+  }, [user, authLoading]);
+
+  // Save data whenever it changes (Local Mode Only)
+  useEffect(() => {
+    if (step !== 'loading' && !user) {
       saveFlashcards(allFlashcards);
     }
-  }, [allFlashcards, step]);
+  }, [allFlashcards, step, user]);
 
   // Listen for custom upload event from Library
   useEffect(() => {
@@ -114,9 +133,9 @@ function App() {
     reader.readAsText(file);
   };
 
-  const handleImport = (frontCol, backCol, categoryCol) => {
+  const handleImport = async (frontCol, backCol, categoryCol) => {
     const newCards = csvData.data.map(row => ({
-      id: Date.now() + Math.random().toString(36).substr(2, 9),
+      id: user ? undefined : Date.now() + Math.random().toString(36).substr(2, 9), // Let DB generate ID if cloud
       front: row[frontCol] || '',
       back: row[backCol] || '',
       category: categoryCol >= 0 ? (row[categoryCol] || 'Uncategorized') : 'Uncategorized',
@@ -129,13 +148,31 @@ function App() {
       return;
     }
 
-    setAllFlashcards(prev => [...prev, ...newCards]);
+    if (user) {
+      // Cloud Import
+      try {
+        const promises = newCards.map(card => cardService.addCard(card, user));
+        await Promise.all(promises);
+        // Refresh data
+        const cloudCards = await cardService.getCards(user);
+        setAllFlashcards(cloudCards);
+      } catch (error) {
+        console.error('Import error:', error);
+        alert('Error saving to cloud');
+      }
+    } else {
+      // Local Import
+      setAllFlashcards(prev => [...prev, ...newCards]);
+    }
     setStep('library');
   };
 
   const handleStartReview = (filters) => {
     let sessionCards = allFlashcards.filter(card => {
-      const catMatch = filters.category === 'all' || card.category === filters.category;
+      // Handle array tags from Supabase vs string category from CSV
+      const cardCategory = Array.isArray(card.tags) ? (card.tags[0] || 'Uncategorized') : (card.category || 'Uncategorized');
+
+      const catMatch = filters.category === 'all' || cardCategory === filters.category;
       const diffMatch = filters.difficulty === 'all' ||
         (filters.difficulty === 'new' && !card.difficulty) ||
         card.difficulty === filters.difficulty;
@@ -160,13 +197,50 @@ function App() {
     setMasteredCount(0);
   };
 
-  const handleClearData = () => {
-    clearFlashcards();
-    setAllFlashcards([]);
-    setStep('upload');
+  const handleClearData = async () => {
+    if (user) {
+      alert('Bulk delete not implemented for cloud yet to prevent accidents.');
+    } else {
+      clearFlashcards();
+      setAllFlashcards([]);
+      setStep('upload');
+    }
   };
 
-  const resetFlipWithoutAnimation = (callback = () => {}) => {
+  const handleSync = async () => {
+    if (!user) return;
+    if (!confirm('This will upload all local cards to your account. Continue?')) return;
+
+    const localCards = loadFlashcards();
+    if (localCards.length === 0) {
+      alert('No local cards to sync.');
+      return;
+    }
+
+    try {
+      // Simple upload
+      const promises = localCards.map(card => cardService.addCard({
+        front: card.front,
+        back: card.back,
+        tags: [card.category || 'Imported']
+      }, user));
+
+      await Promise.all(promises);
+      alert('Sync complete!');
+
+      // Refresh
+      const cloudCards = await cardService.getCards(user);
+      setAllFlashcards(cloudCards);
+
+      // Optional: Clear local?
+      // clearFlashcards(); 
+    } catch (error) {
+      console.error('Sync error:', error);
+      alert('Sync failed: ' + error.message);
+    }
+  };
+
+  const resetFlipWithoutAnimation = (callback = () => { }) => {
     setDisableFlipAnimation(true);
     setIsFlipped(false);
     callback();
@@ -177,7 +251,6 @@ function App() {
     if (currentIndex < studySession.length - 1) {
       resetFlipWithoutAnimation(() => setCurrentIndex(prev => prev + 1));
     } else {
-      // End of session
       if (confirm('Session complete! Return to Library?')) {
         setStep('library');
       }
@@ -190,26 +263,39 @@ function App() {
     }
   };
 
-  const handleDifficulty = (level) => {
+  const handleDifficulty = async (level) => {
     const currentCard = studySession[currentIndex];
 
-    // Update the card in the global state
+    // Optimistic Update
     const updatedAllCards = allFlashcards.map(c =>
       c.id === currentCard.id
-        ? { ...c, difficulty: level, lastReviewed: Date.now() }
+        ? { ...c, difficulty: level, lastReviewed: Date.now() } // Note: Supabase uses different field names usually, but we'll map it
         : c
     );
     setAllFlashcards(updatedAllCards);
 
-    // Update local session state to reflect change immediately if needed
-    // (Optional, but good for UI consistency)
+    if (user) {
+      // Save to Cloud
+      // Note: Our schema has review_count, next_review_date. 
+      // We are storing 'difficulty' string in local state. 
+      // Ideally we should update the schema or map it.
+      // For now, let's just update the card if we added a 'difficulty' column or just ignore persistence of difficulty if schema doesn't support it.
+      // Wait, schema has 'review_count'. Let's just increment that for now as a proxy for "reviewed".
+      try {
+        await cardService.updateCard(currentCard.id, {
+          review_count: (currentCard.review_count || 0) + 1,
+          // We could store difficulty in a JSONB column or add a column. 
+          // For MVP, let's assume we just track reviews.
+        });
+      } catch (e) {
+        console.error('Failed to update card progress', e);
+      }
+    }
 
     if (level === 'easy') {
       setMasteredCount(prev => prev + 1);
     } else if (level === 'hard') {
-      // Requeue logic for hard cards in current session
       const newSession = [...studySession];
-      // Move current card to end
       newSession.splice(currentIndex, 1);
       newSession.push(currentCard);
       resetFlipWithoutAnimation(() => {
@@ -248,16 +334,36 @@ function App() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [step, currentIndex, studySession]);
 
-  if (step === 'loading') return <div className="container">Loading...</div>;
+  if (authLoading || step === 'loading') return <div className="container">Loading...</div>;
 
-  // Show landing page first
+  if (step === 'auth') {
+    return (
+      <div className="container">
+        <button className="btn btn-secondary" onClick={() => setStep('library')}>Back</button>
+        <Auth />
+      </div>
+    );
+  }
+
   if (showLanding) {
     return <LandingPage onStart={() => setShowLanding(false)} />;
   }
 
   return (
     <div className="container">
-      <h1>📚 Flashcard App</h1>
+      <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+        <h1>📚 Flashcard App</h1>
+        <div>
+          {user ? (
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+              <span style={{ fontSize: '0.8em' }}>{user.email}</span>
+              <button className="btn btn-secondary" style={{ padding: '5px 10px' }} onClick={() => supabase.auth.signOut()}>Logout</button>
+            </div>
+          ) : (
+            <button className="btn btn-primary" style={{ padding: '5px 10px' }} onClick={() => setStep('auth')}>Login / Sync</button>
+          )}
+        </div>
+      </header>
 
       {step === 'upload' && (
         <>
@@ -283,6 +389,8 @@ function App() {
           flashcards={allFlashcards}
           onStartReview={handleStartReview}
           onClearData={handleClearData}
+          user={user}
+          onSync={handleSync}
         />
       )}
 
@@ -318,7 +426,7 @@ function App() {
             onPrev={handlePrev}
             onDifficulty={handleDifficulty}
             hasPrev={currentIndex > 0}
-            hasNext={true} // Always allow next (it might end session)
+            hasNext={true}
           />
         </div>
       )}

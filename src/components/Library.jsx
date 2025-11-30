@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 
-const Library = ({ flashcards, onStartReview, onClearData }) => {
+const Library = ({ flashcards, onStartReview, onClearData, user, onSync }) => {
     const [selectedCategory, setSelectedCategory] = useState('all');
     const [selectedDifficulty, setSelectedDifficulty] = useState('all');
     const [categories, setCategories] = useState([]);
@@ -92,6 +92,11 @@ const Library = ({ flashcards, onStartReview, onClearData }) => {
                 <button className="btn btn-secondary" style={{ flex: 1 }} onClick={() => document.getElementById('fileInput').click()}>
                     Import More CSV
                 </button>
+                {user && (
+                    <button className="btn btn-primary" style={{ flex: 1, background: '#667eea' }} onClick={onSync}>
+                        Sync Local to Cloud
+                    </button>
+                )}
                 <button className="btn btn-secondary" style={{ flex: 1, color: '#e53e3e', borderColor: '#e53e3e' }} onClick={() => {
                     if (confirm('Are you sure you want to delete all cards?')) onClearData();
                 }}>
