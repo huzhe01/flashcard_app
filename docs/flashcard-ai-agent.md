@@ -1,36 +1,211 @@
-# 闪记卡系统设计：从 CSV 到 AI 私人助理
+# 手把手打造闪记卡 AI Agent
 
-> 基于本仓库的 React + Supabase 闪记卡应用，拆解系统设计，并延展到 AI 时代如何把它进化成懂你的学习 Agent。
+> 按照“搭建记忆底座 → 打通 Supabase → 注入 SRS → 接入 AI Agent → 微调私人助理”五大阶段教学，直接基于本仓库即可复刻全流程。
 
-## 1. 重新思考闪记卡的价值
+## 流程蓝图（含 AI Agent）
 
-- **输入门槛低**：CSV 拖拽即可生成学习材料，极适合把 Notion/Obsidian/Excel 的笔记快速转成卡片。
-- **分层体验**：Landing Page 的营销叙事、`Library` 的统计面板、`RelationshipGraph` 的知识地图，支撑从新手到重度学习者的不同入口。
-- **AI-ready**：本地 `localStorage` + 云端 Supabase 双模存储、SRS 数据埋点，为后续 AI 推荐、Agent Tooling 留下可扩展的“结构化地基”。
+```mermaid
+flowchart LR
+    A[CSV / 笔记输入] --> B[FileUpload 拖拽上传]
+    B --> C[ColumnMapper 字段映射]
+    C --> D[统一卡片模型]
+    D --> E{存储模式}
+    E -->|本地| F[localStorage 缓存]
+    E -->|云端| G[Supabase flashcards 表]
+    G --> H[cardService API]
+    H --> I[calculateNextReview SRS 调度]
+    I --> J[Agent 工具层]
+    J --> K[对话式私人助理]
+    J --> L[训练 / 微调数据]
+    L --> K
+```
 
-## 2. 系统架构快照
+## 0. 准备工作
 
-### 2.1 前端骨架
-- `App.jsx` 充当状态编排器：管理上传 → 映射 → 复习的步骤机，以及 `user`/`studySession` 等核心状态。
-- `import.meta.glob` 预置默认 CSV，保证新用户开箱即用，并且统一由 `parseCSV` 把数据整理为 `{ headers, data }` 结构。
+- Node.js 16+、npm，以及 Supabase 账号（或任何兼容 Postgres 的后端）。
+- 在 `.env` 中配置 `VITE_SUPABASE_URL` 与 `VITE_SUPABASE_ANON_KEY`。
+- Supabase 表 `flashcards` 需要字段：`id`, `user_id`, `front`, `back`, `tags` (text[]), `review_count`, `next_review_date`, `created_at`。
 
-### 2.2 数据入口：从 CSV 到标准卡片
-1. `FileUpload` 负责拖拽/选择文件，并通过 `handleFileUpload` 触发解析。
-2. `ColumnMapper` 允许分别映射题面、答案、分类或自定义标签，确保后续统计、过滤都能命中。
-3. `handleImport` 输出统一的卡片模型 `{ front, back, category, tags, difficulty, lastReviewed }`，与 Supabase 表结构一一对齐。
+---
 
-### 2.3 本地缓存 + 云端协作
-- `src/utils/storage.js` 用浏览器 `localStorage` 作为离线 fallback。
-- 当登录后，`cardService` 直接对 Supabase `flashcards` 表执行 CRUD，保证不同设备间自动同步。
-- `onSync` 支持把离线卡片一次性推送到云端，为“移动端离线背”到“桌面端复盘”提供无缝体验。
+## Step 1. 启动闪记卡基础应用
 
-### 2.4 复习中台
-- `Library` 聚合统计、筛选器、批量操作与 `SRS` 模式切换；`TagSidebar` 做多维度过滤，`RelationshipGraph` 用 canvas 力导布局呈现知识簇。
-- `Flashcard` + `Controls` 提供键盘/手势友好的复习交互，`handleDifficulty` 会实时更新卡片状态并把“Hard”卡重排到队尾。
+1. 克隆仓库并启动：
+   ```bash
+   git clone <repo-url>
+   cd flashcard-app
+   npm install
+   npm run dev
+   ```
+2. 浏览器访问 `http://localhost:5173`，先体验 Landing Page，再点击“开始使用”进入实际应用。
+3. 熟悉 UI：`Library` 是复习控制中心，`Graph` 呈现知识簇，`Study` 页承载背诵体验。
 
-## 3. SRS 大脑怎么落地
+---
 
-应用采用轻量的 Ebbinghaus/SM-2 混合策略，通过 `calculateNextReview` 计算每次评分后的下一次复习日期与间隔：
+## Step 2. 从 CSV 搭建结构化卡片管线
+
+1. 在 `FileUpload` 组件拖拽或点击导入 CSV，`handleFileUpload` 负责读取与解析。
+2. 进入 `ColumnMapper`，手动映射题面、答案和分类，可设置固定分类以便后续 SRS 过滤。
+3. `handleImport` 把每一行转换成统一卡片模型，并决定是本地写入还是调用云端 API：
+
+```122:179:src/App.jsx
+  const handleFileUpload = (file) => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const text = e.target.result;
+      const parsed = parseCSV(text);
+      if (parsed.data.length > 0) {
+        setCsvData(parsed);
+        setStep('map');
+      } else {
+        alert('CSV file is empty or invalid');
+      }
+    };
+    reader.readAsText(file);
+  };
+
+  const handleImport = async (frontCol, backCol, categoryCol, customCategory) => {
+    const newCards = csvData.data.map(row => {
+      let category = 'Uncategorized';
+      if (customCategory) {
+        category = customCategory;
+      } else if (categoryCol >= 0) {
+        category = row[categoryCol] || 'Uncategorized';
+      }
+
+      return {
+        id: user ? undefined : Date.now() + Math.random().toString(36).substr(2, 9), // Let DB generate ID if cloud
+        front: row[frontCol] || '',
+        back: row[backCol] || '',
+        category: category,
+        tags: [category], // Ensure tags are set for Supabase
+        difficulty: null,
+        lastReviewed: null
+      };
+    }).filter(card => card.front && card.back);
+
+    if (newCards.length === 0) {
+      alert('No valid cards found');
+      return;
+    }
+
+    if (user) {
+      // Cloud Import
+      try {
+        const promises = newCards.map(card => cardService.addCard(card, user));
+        await Promise.all(promises);
+        // Refresh data
+        const cloudCards = await cardService.getCards(user);
+        setAllFlashcards(cloudCards);
+      } catch (error) {
+        console.error('Import error:', error);
+        alert('Error saving to cloud');
+      }
+    } else {
+      // Local Import
+      setAllFlashcards(prev => [...prev, ...newCards]);
+    }
+    setStep('library');
+  };
+```
+
+> 提示：可以新增“AI 生成”按钮，调用 LLM 根据长文本自动产出 CSV，以便继续复用这条导入管线。
+
+---
+
+## Step 3. 同时支持本地缓存与 Supabase 云端
+
+- 离线场景使用浏览器 `localStorage`，相关逻辑在 `src/utils/storage.js`：
+
+```1:24:src/utils/storage.js
+const STORAGE_KEY = 'flashcards_data';
+
+export const saveFlashcards = (cards) => {
+    try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(cards));
+    } catch (error) {
+        console.error('Failed to save flashcards:', error);
+    }
+};
+
+export const loadFlashcards = () => {
+    try {
+        const data = localStorage.getItem(STORAGE_KEY);
+        return data ? JSON.parse(data) : [];
+    } catch (error) {
+        console.error('Failed to load flashcards:', error);
+        return [];
+    }
+};
+
+export const clearFlashcards = () => {
+    localStorage.removeItem(STORAGE_KEY);
+};
+```
+
+- 登录后切换到 Supabase：`cardService` 暴露 `getCards / addCard / updateCard / getDueCards` 等方法，天然可复用为 Agent 的 Tool：
+
+```16:130:src/services/cardService.js
+export const cardService = {
+    // Fetch cards from Supabase or fallback
+    async getCards(user) {
+        if (!user) return []; // Or handle local storage fallback here if we want mixed mode
+
+        const { data, error } = await supabase
+            .from('flashcards')
+            .select('*')
+            .order('created_at', { ascending: false });
+
+        if (error) throw error;
+
+        // Normalize data for frontend (map tags to category)
+        return data.map(card => ({
+            ...card,
+            category: card.tags && card.tags.length > 0 ? card.tags[0] : 'Uncategorized'
+        }));
+    },
+
+    async addCard(card, user) {
+        if (!user) throw new Error('User must be logged in');
+
+        const { data, error } = await supabase
+            .from('flashcards')
+            .insert([
+                {
+                    user_id: user.id,
+                    front: card.front,
+                    back: card.back,
+                    tags: card.tags || [],
+                    review_count: 0,
+                    // next_review_date defaults to now() in DB
+                }
+            ])
+            .select();
+
+        if (error) throw error;
+        return data[0];
+    },
+
+    async updateCard(id, updates) {
+        const { data, error } = await supabase
+            .from('flashcards')
+            .update(updates)
+            .eq('id', id)
+            .select();
+
+        if (error) throw error;
+        return data[0];
+    },
+    ...
+```
+
+> 小技巧：`Library` 中的“Sync Local to Cloud” 按钮已经示范了如何批量把离线卡片推送到 Supabase。
+
+---
+
+## Step 4. 注入 SRS 大脑
+
+1. **计算复习节奏**：`calculateNextReview` 依据难度评级动态拉长/缩短间隔。
 
 ```4:29:src/utils/srsAlgorithm.js
 export const calculateNextReview = (currentInterval, rating) => {
@@ -62,78 +237,127 @@ export const calculateNextReview = (currentInterval, rating) => {
 };
 ```
 
-对应的云端调度则由 `cardService.getDueCards` 完成：先查 `next_review_date <= now` 的到期卡片，再用 `review_count = 0` 的新卡补齐配额，形成自动化的“今日待办”：
+2. **派发待复习任务**：`cardService.getDueCards` 先取到期卡片，再用“从未复习”的卡补齐数量，天然可被 Agent 调用：
 
 ```76:112:src/services/cardService.js
-async getDueCards(user, limit = 20) {
-    if (!user) return [];
+    async getDueCards(user, limit = 20) {
+        if (!user) return [];
 
-    const now = new Date().toISOString();
+        const now = new Date().toISOString();
 
-    const { data: dueCards } = await supabase
-        .from('flashcards')
-        .select('*')
-        .lte('next_review_date', now)
-        .order('next_review_date', { ascending: true })
-        .limit(limit);
-
-    let cards = dueCards || [];
-
-    if (cards.length < limit) {
-        const remaining = limit - cards.length;
-        const { data: newCards } = await supabase
+        // 1. Fetch cards due for review
+        const { data: dueCards, error: dueError } = await supabase
             .from('flashcards')
             .select('*')
-            .eq('review_count', 0)
-            .limit(remaining);
+            .lte('next_review_date', now)
+            .order('next_review_date', { ascending: true })
+            .limit(limit);
 
-        if (newCards) {
-            cards = [...cards, ...newCards];
+        if (dueError) throw dueError;
+
+        let cards = dueCards || [];
+
+        // 2. If not enough, fill with new cards (review_count = 0)
+        if (cards.length < limit) {
+            const remaining = limit - cards.length;
+            const { data: newCards, error: newError } = await supabase
+                .from('flashcards')
+                .select('*')
+                .eq('review_count', 0)
+                .limit(remaining);
+
+            if (!newError && newCards) {
+                cards = [...cards, ...newCards];
+            }
         }
-    }
 
-    return cards.map(card => ({
-        ...card,
-        category: card.tags && card.tags.length > 0 ? card.tags[0] : 'Uncategorized'
-    }));
-}
+        // Normalize
+        return cards.map(card => ({
+            ...card,
+            category: card.tags && card.tags.length > 0 ? card.tags[0] : 'Uncategorized'
+        }));
+    },
 ```
 
-## 4. 面向 AI 的系统演进
+3. **体验验证**：在 Library 切换到 “Smart Review (SRS)” 即可调用这套流程；也可以在浏览器 Network 面板观察 Supabase 请求。
 
-1. **结构化知识库**  
-   - 利用 Supabase 中的 `front/back/tags/review_count` 做主数据；定期导出为 JSONL，或者直接在 Edge Function 里把每张卡写入向量库（如 Supabase Vector、Pinecone）。  
-   - 以“卡片→知识单元→语义 embedding”形成可检索的 RAG 素材，供 Agent 在对话中引用。
+---
 
-2. **Agent 工具化**  
-   - 把 `cardService` 的方法包装成 Agent 的 Tool：如 `ListDueCards`, `AddCard`, `ScoreCard`，Agent 可以根据上下文调用这些 API 来同步学习进度。  
-   - 通过 LangChain / Autogen / LlamaIndex 配置一个多工具 Agent：`search_notes`（RAG）、`schedule_review`（SRS 查询）、`summarize_csv`（LLM 解析新资料）。
+## Step 5. 把系统包装成 AI Agent 可调用的工具
 
-3. **个性化策略层**  
-   - 在 `handleDifficulty` 里新增埋点：记录用户对某类知识的掌握波动，Agent 可据此动态改写提示词（如“更偏好举例式解释”）。  
-   - 结合 `RelationshipGraph` 的拓扑，把类别视作知识簇，让 Agent 优先推荐与“薄弱簇”相关的卡片或生成新的练习题。
+### 5.1 构建知识检索层（RAG）
+- 周期性把 `flashcards` 导出为 JSONL，并用 `front + back + tags` 拼接后的文本生成 embedding。
+- 可选方案：Supabase Vector、Pinecone、Weaviate，或把 embedding 存回 Supabase 的向量列。
+- Agent 的 `search_notes` 工具即可基于该向量库做语义召回。
 
-## 5. 训练 / 微调你的私人学习助理
+### 5.2 暴露动作型 Tool
 
-1. **数据蒸馏**：把每次复习的问答对、难度评价、复盘笔记（可新增字段）整理成指令数据，格式如 `{"instruction": "帮助我复习", "input": "...卡片数据...", "output": "...Agent 回答..."}`。  
-2. **知识增强**：用 LLM 自动生成相似题、反向问答、类比故事，扩充训练样本，缓解小数据问题。  
-3. **LoRA / QLoRA 微调**：选择开源基座（Qwen2.5, Llama 3.1 等），针对上一步的数据做参数高效微调，部署在本地 GPU 或云端推理服务。  
-4. **对齐与评估**：利用 Supabase 的行级安全（RLS）和审计日志，记录 Agent 建议与真实学习表现的差，其结果既能反馈微调，也能驱动在线强化（RLHF/Offline RL）。
+用 Node + Supabase Service Key 写一层 API/SDK，暴露给 Agent：
 
-## 6. 本地运行与云服务
+```js
+// agent/tools/cardTools.js
+import { cardService } from '../src/services/cardService.js';
 
-```bash
-npm install
-npm run dev
+export const listDueCardsTool = {
+  name: 'list_due_cards',
+  description: '获取今天需要复习的卡片，返回 front/back/tags',
+  func: async ({ user, limit = 15 }) => cardService.getDueCards(user, limit)
+};
+
+export const addCardTool = {
+  name: 'add_card_from_text',
+  description: '根据上下文生成问答并写入 Supabase',
+  func: async ({ user, front, back, tags }) =>
+    cardService.addCard({ front, back, tags }, user)
+};
 ```
 
-- 环境变量：在 `.env` 中配置 `VITE_SUPABASE_URL` 与 `VITE_SUPABASE_ANON_KEY` 即可启用登录、同步、SRS 查询。  
-- GitHub Actions (`.github/workflows/deploy.yml`) 已配置 Vite 项目自动构建，推送到 `main` 即可上 GitHub Pages。
+### 5.3 组装一个多工具 Agent
 
-## 7. 后续演进建议
+```js
+// agent/index.js
+import { ChatOpenAI } from '@langchain/openai';
+import { initializeAgentExecutor } from 'langchain/agents';
+import { listDueCardsTool, addCardTool } from './tools/cardTools.js';
+import { ragSearchTool } from './tools/rag.js';
 
-- **AI 生成卡片**：新增一个 `generateFromText` 服务，把论文 / 网课字幕上传后由 LLM 自动抽取 QA。  
-- **学习节奏洞察**：结合 Supabase Edge Functions 定时扫描 `next_review_date`，推送提醒或生成“本周知识热力图”。  
-- **多 Agent 协作**：拆分“资料整理 Agent”“复习导师 Agent”“情绪陪伴 Agent”，分别调用不同工具，在会话中协同完成自适应教学。
+const llm = new ChatOpenAI({ model: 'gpt-4o-mini', temperature: 0.2 });
+const tools = [listDueCardsTool, addCardTool, ragSearchTool];
+const executor = await initializeAgentExecutor(tools, llm, {
+  agentType: 'openai-functions',
+  verbose: true
+});
 
-借助目前已经打好的数据模型与前端交互，你可以把这个闪记卡项目当作“学习 OS”，再叠加 AI Agent / 模型微调，把所有学习资产持续沉淀为懂你的私人助理。
+const res = await executor.invoke({
+  input: '帮我安排今晚 20 分钟的复习，并把“Transformer”笔记生成 3 张卡片'
+});
+console.log(res.output);
+```
+
+- 在前端，可以通过 `supabase.auth.getSession()` 拿到当前用户信息，将 `access_token` 传给 Agent 服务端，以执行行级安全策略。
+- 若想在浏览器直接运行 Agent，可把工具换成 HTTP API（由 Cloudflare Worker / Supabase Edge Function 暴露）。
+
+---
+
+## Step 6. 训练 / 微调你的私人助理
+
+1. **数据蒸馏**：把用户对卡片的评分（Easy/Medium/Hard）、复习时长、Agent 的答复一起记录成 `instruction / input / output` 样本。
+2. **自动扩充样本**：用主模型生成“同义卡片”“错题解析”“类比故事”，并人工抽检，形成更丰富的 Prompt。
+3. **LoRA/QLoRA 微调流程**：
+   - 准备格式化数据（如 Alpaca 格式）。
+   - 选择模型（Qwen2.5 7B、Llama 3.1 8B 等），使用 `unsloth`、`axolotl` 或 `lmflow` 跑 LoRA。
+   - 把 Adapter 部署到 GPU 服务（AWS g5、RunPod）或本地显卡，前端通过推理 API 与之交互。
+4. **在线对齐**：Supabase 的 Audit Log 可记录 Agent 建议和真实复习效果，用于事后评估或 RLHF。
+
+---
+
+## Step 7. 测试、部署与持续演进
+
+- **自动化构建**：仓库自带 GitHub Pages 工作流，推送 `main` 即可上线静态站。
+- **监控 & 提示**：使用 Supabase Edge Function 每日扫描 `next_review_date`，触发邮件/推送或直接唤起 Agent 主动问候。
+- **多 Agent 协作**：拆分“资料整理 Agent”“复习导师 Agent”“情绪陪伴 Agent”，分别使用不同 Tool，但共享同一知识库与 Supabase。
+- **产品化细节**：在 `Library` 增加 AI 建议面板，把 Agent 输出串联到 UI，形成“下一步学什么”的即时推荐。
+
+---
+
+借助本教程，你可以从零重用该 React + Supabase 闪记卡项目，逐步延伸到具备 SRS 能力、懂个人语境、还能自我训练的 AI 学习 Agent。跟着步骤完成后，你就拥有了一个可持续扩展的“学习操作系统”，后续只需迭代 Tool 与模型，就能不断增强专属的私人助理体验。
