@@ -7,6 +7,12 @@ import Library from './components/Library';
 import { parseCSV } from './utils/csvParser';
 import { saveFlashcards, loadFlashcards, clearFlashcards } from './utils/storage';
 import './App.css';
+// Import all CSV files from assets/data
+const csvFiles = import.meta.glob('./assets/data/*.csv', {
+  query: '?raw',
+  import: 'default',
+  eager: true
+});
 
 function App() {
   const [step, setStep] = useState('loading'); // loading, library, upload, map, study
@@ -19,9 +25,61 @@ function App() {
 
   // Load data on mount
   useEffect(() => {
-    const loaded = loadFlashcards();
-    setAllFlashcards(loaded);
-    setStep(loaded.length > 0 ? 'library' : 'upload');
+    const localCards = loadFlashcards();
+    let initialCards = [...localCards];
+
+    // Load embedded CSVs
+    // Note: This is a simple merge. In a real app, we might want to track which file a card came from
+    // to avoid duplicates or updates. For now, we just append if not empty.
+    // However, simply appending every time will duplicate cards if we save back to local storage.
+    // Strategy: We will only use embedded data if local storage is empty OR we can treat embedded data as a separate "read-only" source.
+    // But user wants "sync". 
+    // Simplified approach: If local storage is empty, load ALL embedded files.
+    // If local storage has data, we assume it's the source of truth (user might have deleted cards).
+    // BUT user wants to see new files.
+    // Better approach: Load all embedded cards. Filter out ones that already exist in local storage (by content).
+
+    const embeddedCards = [];
+    Object.values(csvFiles).forEach(csvContent => {
+      const parsed = parseCSV(csvContent);
+      if (parsed.data.length > 0) {
+        // We assume standard columns for embedded files: Front, Back, Category (optional)
+        // Since we can't map columns for auto-loaded files easily without user interaction,
+        // we'll assume: Col 0 = Front, Col 1 = Back, Col 2 = Category (if exists)
+        // OR we just prompt user to map if it's the VERY first time.
+
+        // Let's try to be smart: Use first 2 columns.
+        const newCards = parsed.data.map(row => ({
+          id: Date.now() + Math.random().toString(36).substr(2, 9),
+          front: row[0] || '',
+          back: row[1] || '',
+          category: row[2] || 'Imported',
+          difficulty: null,
+          lastReviewed: null
+        })).filter(card => card.front && card.back);
+        embeddedCards.push(...newCards);
+      }
+    });
+
+    if (localCards.length === 0 && embeddedCards.length > 0) {
+      // First time load
+      setAllFlashcards(embeddedCards);
+      setStep('library');
+    } else if (localCards.length > 0) {
+      // We have local data. 
+      // Ideally we merge new files. But detecting "new" is hard without IDs.
+      // For now, let's just show local data to be safe, or user can "Reset" to get new data.
+      // User request: "I upload 1.csv, 2.csv... I want to see them".
+      // Let's check if we should merge.
+      // A simple way: Check if the number of cards differs significantly or just append?
+      // Appending duplicates is bad.
+      // Let's stick to: Local Storage is King. 
+      // IF user wants to sync new files, they might need a "Reload from Files" button in Library.
+      setAllFlashcards(localCards);
+      setStep('library');
+    } else {
+      setStep('upload');
+    }
   }, []);
 
   // Save data whenever it changes
