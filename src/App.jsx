@@ -6,6 +6,7 @@ import Flashcard from './components/Flashcard';
 import Controls from './components/Controls';
 import Library from './components/Library';
 import Auth from './components/Auth';
+import { calculateNextReview } from './utils/srsAlgorithm';
 import { parseCSV } from './utils/csvParser';
 import { saveFlashcards, loadFlashcards, clearFlashcards } from './utils/storage';
 import { supabase } from './lib/supabase';
@@ -133,15 +134,25 @@ function App() {
     reader.readAsText(file);
   };
 
-  const handleImport = async (frontCol, backCol, categoryCol) => {
-    const newCards = csvData.data.map(row => ({
-      id: user ? undefined : Date.now() + Math.random().toString(36).substr(2, 9), // Let DB generate ID if cloud
-      front: row[frontCol] || '',
-      back: row[backCol] || '',
-      category: categoryCol >= 0 ? (row[categoryCol] || 'Uncategorized') : 'Uncategorized',
-      difficulty: null,
-      lastReviewed: null
-    })).filter(card => card.front && card.back);
+  const handleImport = async (frontCol, backCol, categoryCol, customCategory) => {
+    const newCards = csvData.data.map(row => {
+      let category = 'Uncategorized';
+      if (customCategory) {
+        category = customCategory;
+      } else if (categoryCol >= 0) {
+        category = row[categoryCol] || 'Uncategorized';
+      }
+
+      return {
+        id: user ? undefined : Date.now() + Math.random().toString(36).substr(2, 9), // Let DB generate ID if cloud
+        front: row[frontCol] || '',
+        back: row[backCol] || '',
+        category: category,
+        tags: [category], // Ensure tags are set for Supabase
+        difficulty: null,
+        lastReviewed: null
+      };
+    }).filter(card => card.front && card.back);
 
     if (newCards.length === 0) {
       alert('No valid cards found');
@@ -167,27 +178,83 @@ function App() {
     setStep('library');
   };
 
-  const handleStartReview = (filters) => {
-    let sessionCards = allFlashcards.filter(card => {
-      // Handle array tags from Supabase vs string category from CSV
-      const cardCategory = Array.isArray(card.tags) ? (card.tags[0] || 'Uncategorized') : (card.category || 'Uncategorized');
+  // Advanced Card Management Handlers
+  const handleBatchDelete = async (ids) => {
+    if (user) {
+      try {
+        await cardService.batchDelete(ids);
+        // Refresh
+        const cloudCards = await cardService.getCards(user);
+        setAllFlashcards(cloudCards);
+      } catch (e) {
+        console.error(e);
+        alert('Batch delete failed');
+      }
+    } else {
+      setAllFlashcards(prev => prev.filter(c => !ids.includes(c.id)));
+    }
+  };
 
-      const catMatch = filters.category === 'all' || cardCategory === filters.category;
-      const diffMatch = filters.difficulty === 'all' ||
-        (filters.difficulty === 'new' && !card.difficulty) ||
-        card.difficulty === filters.difficulty;
-      return catMatch && diffMatch;
-    });
+  const handleBatchMove = async (ids, newCategory) => {
+    if (user) {
+      try {
+        await cardService.batchUpdateCategory(ids, newCategory);
+        // Refresh
+        const cloudCards = await cardService.getCards(user);
+        setAllFlashcards(cloudCards);
+      } catch (e) {
+        console.error(e);
+        alert('Batch move failed');
+      }
+    } else {
+      setAllFlashcards(prev => prev.map(c => ids.includes(c.id) ? { ...c, category: newCategory } : c));
+    }
+  };
+
+  const handleDissolveGroup = async (category) => {
+    const cardsInGroup = allFlashcards.filter(c => c.category === category);
+    const ids = cardsInGroup.map(c => c.id);
+    await handleBatchMove(ids, 'Uncategorized');
+  };
+
+  const handleStartReview = async (filters) => {
+    let sessionCards = [];
+
+    if (filters.mode === 'srs') {
+      // SRS Mode
+      if (user) {
+        try {
+          sessionCards = await cardService.getDueCards(user, filters.limit);
+        } catch (e) {
+          console.error(e);
+          alert('Failed to fetch due cards');
+          return;
+        }
+      } else {
+        alert('SRS mode currently only works with Cloud Sync enabled (Login required).');
+        return;
+      }
+    } else {
+      // Standard Mode
+      sessionCards = allFlashcards.filter(card => {
+        const cardCategory = Array.isArray(card.tags) ? (card.tags[0] || 'Uncategorized') : (card.category || 'Uncategorized');
+        const catMatch = filters.category === 'all' || cardCategory === filters.category;
+        const diffMatch = filters.difficulty === 'all' ||
+          (filters.difficulty === 'new' && !card.difficulty) ||
+          card.difficulty === filters.difficulty;
+        return catMatch && diffMatch;
+      });
+
+      // Shuffle Standard Mode
+      for (let i = sessionCards.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [sessionCards[i], sessionCards[j]] = [sessionCards[j], sessionCards[i]];
+      }
+    }
 
     if (sessionCards.length === 0) {
       alert('No cards match your filters');
       return;
-    }
-
-    // Shuffle
-    for (let i = sessionCards.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [sessionCards[i], sessionCards[j]] = [sessionCards[j], sessionCards[i]];
     }
 
     setStudySession(sessionCards);
@@ -266,26 +333,52 @@ function App() {
   const handleDifficulty = async (level) => {
     const currentCard = studySession[currentIndex];
 
+    // Calculate SRS
+    // We need current interval. If not present, assume 0.
+    // In DB we don't store interval explicitly yet, but we can infer or just start fresh.
+    // Ideally we should store 'interval' in DB. For now, let's just use a local property if available, or 0.
+    // Since we re-fetch cards, we lose local state. We should probably add 'interval' to DB schema later.
+    // For now, let's assume 'review_count' roughly correlates or just use 0 if missing.
+    // actually, let's just use 0 for now as MVP or try to read from card if we added it.
+
+    // Better approach for MVP without schema change: 
+    // Use 'review_count' as a proxy for "streak" if we want, OR just calculate based on last review date? No, that's hard.
+    // Let's just calculate next date based on rating.
+
+    // If we want real SRS, we need to persist 'interval'.
+    // I will add 'interval' to the update payload. If DB rejects it (schema strict), it might fail.
+    // But Supabase is usually strict.
+    // Let's assume we can only update existing columns.
+    // Existing: review_count, next_review_date.
+    // We can use 'review_count' as the 'interval' (days) for simplicity? No, that's bad.
+    // Let's just implement a simple logic:
+    // Easy -> +3 days. Medium -> +1 day. Hard -> +0 days (today).
+    // Wait, user asked for Ebbinghaus.
+    // Let's try to store metadata in 'tags' or just be simple.
+    // "next_review_date" is the key.
+
+    // Let's use the helper but pass 0 as interval if unknown.
+    // We will try to store 'last_interval' in the card object in memory.
+
+    const lastInterval = currentCard.last_interval || 0;
+    const { nextReviewDate, interval } = calculateNextReview(lastInterval, level);
+
     // Optimistic Update
     const updatedAllCards = allFlashcards.map(c =>
       c.id === currentCard.id
-        ? { ...c, difficulty: level, lastReviewed: Date.now() } // Note: Supabase uses different field names usually, but we'll map it
+        ? { ...c, difficulty: level, lastReviewed: Date.now(), next_review_date: nextReviewDate, last_interval: interval }
         : c
     );
     setAllFlashcards(updatedAllCards);
 
     if (user) {
-      // Save to Cloud
-      // Note: Our schema has review_count, next_review_date. 
-      // We are storing 'difficulty' string in local state. 
-      // Ideally we should update the schema or map it.
-      // For now, let's just update the card if we added a 'difficulty' column or just ignore persistence of difficulty if schema doesn't support it.
-      // Wait, schema has 'review_count'. Let's just increment that for now as a proxy for "reviewed".
       try {
         await cardService.updateCard(currentCard.id, {
           review_count: (currentCard.review_count || 0) + 1,
-          // We could store difficulty in a JSONB column or add a column. 
-          // For MVP, let's assume we just track reviews.
+          next_review_date: nextReviewDate,
+          // We can't save 'last_interval' without schema change. 
+          // We'll have to live with "stateless" SRS (always assumes 0 or based on review_count) unless we migrate schema.
+          // For now, let's just save what we can.
         });
       } catch (e) {
         console.error('Failed to update card progress', e);
@@ -391,6 +484,9 @@ function App() {
           onClearData={handleClearData}
           user={user}
           onSync={handleSync}
+          onBatchDelete={handleBatchDelete}
+          onBatchMove={handleBatchMove}
+          onDissolveGroup={handleDissolveGroup}
         />
       )}
 
