@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import LandingPage from './components/LandingPage';
 import FileUpload from './components/FileUpload';
 import ColumnMapper from './components/ColumnMapper';
 import Flashcard from './components/Flashcard';
@@ -15,6 +16,7 @@ const csvFiles = import.meta.glob('./assets/data/*.csv', {
 });
 
 function App() {
+  const [showLanding, setShowLanding] = useState(true);
   const [step, setStep] = useState('loading'); // loading, library, upload, map, study
   const [csvData, setCsvData] = useState({ headers: [], data: [] });
   const [allFlashcards, setAllFlashcards] = useState([]);
@@ -241,6 +243,11 @@ function App() {
   }, [step, currentIndex, studySession]);
 
   if (step === 'loading') return <div className="container">Loading...</div>;
+
+  // Show landing page first
+  if (showLanding) {
+    return <LandingPage onStart={() => setShowLanding(false)} />;
+  }
 
   return (
     <div className="container">
