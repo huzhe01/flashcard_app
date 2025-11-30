@@ -48,7 +48,7 @@ body {
   box-shadow: var(--shadow-lg);
   padding: 40px;
   width: 100%;
-  overflow: hidden;
+  overflow: visible;
   transition: all 0.3s ease;
 }
 
@@ -257,6 +257,23 @@ h1 {
 }
 
 /* Responsive */
+@media (max-width: 768px) {
+  body {
+    align-items: flex-start;
+    padding: 12px;
+    background-attachment: scroll;
+  }
+
+  #root {
+    max-width: 100%;
+  }
+
+  .container {
+    padding: 30px;
+    border-radius: 18px;
+  }
+}
+
 @media (max-width: 640px) {
   .container {
     padding: 20px;
@@ -273,5 +290,22 @@ h1 {
 
   .controls {
     grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 480px) {
+  header {
+    flex-direction: column;
+    gap: 12px;
+    text-align: center;
+  }
+
+  .nav-controls {
+    flex-direction: column;
+    gap: 0.75rem;
+  }
+
+  .btn {
+    width: 100%;
   }
 }

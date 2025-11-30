@@ -1,19 +1,26 @@
 import React from 'react';
 
-const TagSidebar = ({ categories, selectedCategory, onSelectCategory }) => {
+const TagSidebar = ({ categories, selectedCategory, onSelectCategory, isMobile = false }) => {
     // categories is an object { categoryName: count }
 
     const sortedCategories = Object.entries(categories).sort((a, b) => b[1] - a[1]);
 
+    const containerStyles = {
+        width: isMobile ? '100%' : '220px',
+        borderRight: isMobile ? 'none' : '1px solid #e2e8f0',
+        border: isMobile ? '1px solid #e2e8f0' : 'none',
+        padding: isMobile ? '15px' : '0 20px 0 0',
+        marginRight: isMobile ? '0' : '20px',
+        marginBottom: isMobile ? '10px' : '0',
+        maxHeight: isMobile ? 'none' : '80vh',
+        overflowY: isMobile ? 'visible' : 'auto',
+        borderRadius: isMobile ? '12px' : '0',
+        background: isMobile ? 'rgba(255, 255, 255, 0.65)' : 'transparent',
+        boxShadow: isMobile ? '0 4px 12px rgba(0, 0, 0, 0.08)' : 'none'
+    };
+
     return (
-        <div style={{
-            width: '220px',
-            borderRight: '1px solid #e2e8f0',
-            paddingRight: '20px',
-            marginRight: '20px',
-            maxHeight: '80vh',
-            overflowY: 'auto'
-        }}>
+        <div style={containerStyles}>
             <h3 style={{ fontSize: '1.1em', marginBottom: '15px', color: '#2d3748' }}>📚 Categories</h3>
 
             <div

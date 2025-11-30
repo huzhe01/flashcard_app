@@ -16,6 +16,19 @@ const Library = ({ flashcards, onStartReview, onClearData, user, onSync, onBatch
     // SRS State
     const [reviewMode, setReviewMode] = useState('standard'); // 'standard', 'srs'
     const [srsLimit, setSrsLimit] = useState(20);
+    const [isMobile, setIsMobile] = useState(() => {
+        if (typeof window !== 'undefined') {
+            return window.innerWidth <= 768;
+        }
+        return false;
+    });
+
+    useEffect(() => {
+        if (typeof window === 'undefined') return;
+        const handleResize = () => setIsMobile(window.innerWidth <= 768);
+        window.addEventListener('resize', handleResize);
+        return () => window.removeEventListener('resize', handleResize);
+    }, []);
 
     useEffect(() => {
         const cats = new Set(flashcards.map(c => c.category).filter(Boolean));
@@ -110,7 +123,13 @@ const Library = ({ flashcards, onStartReview, onClearData, user, onSync, onBatch
 
     return (
         <div className="library-container">
-            <div style={{ display: 'flex', justifyContent: 'center', gap: '20px', marginBottom: '20px' }}>
+            <div style={{
+                display: 'flex',
+                justifyContent: 'center',
+                gap: '12px',
+                marginBottom: '20px',
+                flexWrap: isMobile ? 'wrap' : 'nowrap'
+            }}>
                 <button
                     className={`btn ${viewMode === 'stats' ? 'btn-primary' : 'btn-secondary'}`}
                     onClick={() => setViewMode('stats')}
@@ -131,11 +150,16 @@ const Library = ({ flashcards, onStartReview, onClearData, user, onSync, onBatch
                 </button>
             </div>
 
-            <div style={{ display: 'flex', gap: '20px' }}>
+            <div style={{
+                display: 'flex',
+                gap: isMobile ? '16px' : '20px',
+                flexDirection: isMobile ? 'column' : 'row'
+            }}>
                 <TagSidebar
                     categories={categoryCounts}
                     selectedCategory={sidebarCategory}
                     onSelectCategory={setSidebarCategory}
+                    isMobile={isMobile}
                 />
 
                 <div style={{ flex: 1 }}>
@@ -143,7 +167,12 @@ const Library = ({ flashcards, onStartReview, onClearData, user, onSync, onBatch
                         <RelationshipGraph flashcards={flashcards} onSelectCategory={setSidebarCategory} />
                     ) : viewMode === 'stats' ? (
                         <>
-                            <div className="stats-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '10px', marginBottom: '30px' }}>
+                            <div className="stats-grid" style={{
+                                display: 'grid',
+                                gridTemplateColumns: isMobile ? 'repeat(2, minmax(0, 1fr))' : 'repeat(4, 1fr)',
+                                gap: '10px',
+                                marginBottom: '30px'
+                            }}>
                                 <div className="stat-box" style={{ background: '#e2e8f0', padding: '10px', borderRadius: '8px', textAlign: 'center' }}>
                                     <div style={{ fontSize: '1.5em', fontWeight: 'bold' }}>{counts.total}</div>
                                     <div style={{ fontSize: '0.8em' }}>Total</div>
@@ -229,7 +258,11 @@ const Library = ({ flashcards, onStartReview, onClearData, user, onSync, onBatch
                                 </button>
                             </div>
 
-                            <div style={{ display: 'flex', gap: '10px' }}>
+                            <div style={{
+                                display: 'flex',
+                                gap: '10px',
+                                flexDirection: isMobile ? 'column' : 'row'
+                            }}>
                                 <button className="btn btn-secondary" style={{ flex: 1 }} onClick={() => document.getElementById('fileInput').click()}>
                                     Import More CSV
                                 </button>
@@ -275,7 +308,13 @@ const Library = ({ flashcards, onStartReview, onClearData, user, onSync, onBatch
                                 )}
                             </div>
 
-                            <div className="card-list" style={{ maxHeight: '500px', overflowY: 'auto', border: '1px solid #e2e8f0', borderRadius: '8px' }}>
+                            <div className="card-list" style={{
+                                maxHeight: '500px',
+                                overflowY: 'auto',
+                                overflowX: 'auto',
+                                border: '1px solid #e2e8f0',
+                                borderRadius: '8px'
+                            }}>
                                 <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                                     <thead style={{ background: '#f7fafc', position: 'sticky', top: 0 }}>
                                         <tr>
