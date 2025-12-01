@@ -1,11 +1,13 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import TagSidebar from './TagSidebar';
 import RelationshipGraph from './RelationshipGraph';
+import { loadReviewProgress, clearReviewProgress } from '../utils/storage';
 
-const Library = ({ flashcards, onStartReview, onClearData, user, onSync, onBatchDelete, onBatchMove, onDissolveGroup }) => {
+const Library = ({ flashcards, onStartReview, onClearData, user, onSync, onBatchDelete, onBatchMove, onDissolveGroup, onResumeReview }) => {
     const [selectedCategory, setSelectedCategory] = useState('all');
     const [selectedDifficulty, setSelectedDifficulty] = useState('all');
     const [categories, setCategories] = useState([]);
+    const [savedProgress, setSavedProgress] = useState(null);
 
     // Card Manager State
     const [viewMode, setViewMode] = useState('stats'); // 'stats', 'manager', 'graph'
@@ -35,6 +37,12 @@ const Library = ({ flashcards, onStartReview, onClearData, user, onSync, onBatch
         setCategories(['all', ...Array.from(cats)]);
     }, [flashcards]);
 
+    // 检查是否有保存的复习进度（当组件显示时检查）
+    useEffect(() => {
+        const progress = loadReviewProgress();
+        setSavedProgress(progress);
+    }, [viewMode]); // 当viewMode改变时也检查（比如从其他页面返回）
+
     const categoryCounts = useMemo(() => {
         const counts = {};
         flashcards.forEach(card => {
@@ -55,13 +63,32 @@ const Library = ({ flashcards, onStartReview, onClearData, user, onSync, onBatch
         }).length;
     };
 
-    const handleStart = () => {
+    const handleStart = (clearProgress = false) => {
+        if (clearProgress) {
+            clearReviewProgress();
+        }
         onStartReview({
             category: selectedCategory,
             difficulty: selectedDifficulty,
             mode: reviewMode,
             limit: srsLimit
-        });
+        }, false);
+    };
+
+    const handleResume = () => {
+        if (!savedProgress) {
+            alert('没有找到保存的复习进度');
+            return;
+        }
+        onResumeReview(savedProgress.filters, true);
+    };
+
+    const handleRestart = () => {
+        if (confirm('确定要重新开始复习吗？这将清除当前的复习进度。')) {
+            clearReviewProgress();
+            setSavedProgress(null);
+            handleStart(false);
+        }
     };
 
     // Manager Logic
@@ -253,9 +280,47 @@ const Library = ({ flashcards, onStartReview, onClearData, user, onSync, onBatch
                                     </div>
                                 )}
 
-                                <button className="btn btn-primary" style={{ width: '100%' }} onClick={handleStart}>
-                                    Start Review {reviewMode === 'standard' && `(${getFilteredCount()} cards)`}
-                                </button>
+                                {savedProgress && (
+                                    <div style={{ 
+                                        marginBottom: '15px', 
+                                        padding: '12px', 
+                                        background: '#e6f3ff', 
+                                        borderRadius: '8px',
+                                        border: '1px solid #b3d9ff'
+                                    }}>
+                                        <div style={{ fontSize: '0.9em', marginBottom: '8px', color: '#0066cc' }}>
+                                            📍 有保存的复习进度
+                                        </div>
+                                        <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                                            <button 
+                                                className="btn btn-primary" 
+                                                style={{ flex: 1, minWidth: '120px' }} 
+                                                onClick={handleResume}
+                                            >
+                                                回到复习
+                                            </button>
+                                            <button 
+                                                className="btn btn-secondary" 
+                                                style={{ flex: 1, minWidth: '120px' }} 
+                                                onClick={handleStart}
+                                            >
+                                                开始复习
+                                            </button>
+                                            <button 
+                                                className="btn btn-secondary" 
+                                                style={{ flex: 1, minWidth: '120px', color: '#e53e3e', borderColor: '#e53e3e' }} 
+                                                onClick={handleRestart}
+                                            >
+                                                重新学习
+                                            </button>
+                                        </div>
+                                    </div>
+                                )}
+                                {!savedProgress && (
+                                    <button className="btn btn-primary" style={{ width: '100%' }} onClick={() => handleStart(false)}>
+                                        Start Review {reviewMode === 'standard' && `(${getFilteredCount()} cards)`}
+                                    </button>
+                                )}
                             </div>
 
                             <div style={{
