@@ -8,7 +8,7 @@ import Library from './components/Library';
 import Auth from './components/Auth';
 import { calculateNextReview } from './utils/srsAlgorithm';
 import { parseCSV } from './utils/csvParser';
-import { saveFlashcards, loadFlashcards, clearFlashcards } from './utils/storage';
+import { saveFlashcards, loadFlashcards, clearFlashcards, saveReviewProgress, loadReviewProgress, clearReviewProgress } from './utils/storage';
 import { supabase } from './lib/supabase';
 import { cardService } from './services/cardService';
 import './App.css';
@@ -217,7 +217,7 @@ function App() {
     await handleBatchMove(ids, 'Uncategorized');
   };
 
-  const handleStartReview = async (filters) => {
+  const handleStartReview = async (filters, resumeProgress = false) => {
     let sessionCards = [];
 
     if (filters.mode === 'srs') {
@@ -245,10 +245,12 @@ function App() {
         return catMatch && diffMatch;
       });
 
-      // Shuffle Standard Mode
-      for (let i = sessionCards.length - 1; i > 0; i--) {
-        const j = Math.floor(Math.random() * (i + 1));
-        [sessionCards[i], sessionCards[j]] = [sessionCards[j], sessionCards[i]];
+      // Shuffle Standard Mode (only if not resuming)
+      if (!resumeProgress) {
+        for (let i = sessionCards.length - 1; i > 0; i--) {
+          const j = Math.floor(Math.random() * (i + 1));
+          [sessionCards[i], sessionCards[j]] = [sessionCards[j], sessionCards[i]];
+        }
       }
     }
 
@@ -257,11 +259,52 @@ function App() {
       return;
     }
 
-    setStudySession(sessionCards);
+    // 如果恢复进度，尝试从存储中加载
+    let savedIndex = 0;
+    let finalSessionCards = sessionCards;
+    
+    if (resumeProgress) {
+      const savedProgress = loadReviewProgress();
+      if (savedProgress && savedProgress.filters) {
+        // 检查保存的过滤器是否匹配
+        const filtersMatch = 
+          savedProgress.filters.mode === filters.mode &&
+          savedProgress.filters.category === filters.category &&
+          savedProgress.filters.difficulty === filters.difficulty &&
+          (filters.mode !== 'srs' || savedProgress.filters.limit === filters.limit);
+        
+        if (filtersMatch && savedProgress.currentIndex !== undefined) {
+          savedIndex = Math.min(savedProgress.currentIndex, sessionCards.length - 1);
+          
+          // 如果保存了卡片ID顺序，尝试恢复原来的顺序
+          if (savedProgress.cardIds && Array.isArray(savedProgress.cardIds)) {
+            const cardMap = new Map(sessionCards.map(card => [card.id, card]));
+            const orderedCards = savedProgress.cardIds
+              .map(id => cardMap.get(id))
+              .filter(Boolean); // 过滤掉可能已删除的卡片
+            
+            // 如果有有效的有序卡片，使用它们
+            if (orderedCards.length > 0) {
+              finalSessionCards = orderedCards;
+            }
+          }
+        }
+      }
+    }
+
+    setStudySession(finalSessionCards);
     setStep('study');
-    setCurrentIndex(0);
+    setCurrentIndex(savedIndex);
     setIsFlipped(false);
     setMasteredCount(0);
+
+    // 保存复习进度（包括卡片ID顺序）
+    saveReviewProgress({
+      filters: filters,
+      currentIndex: savedIndex,
+      cardIds: finalSessionCards.map(card => card.id),
+      timestamp: Date.now()
+    });
   };
 
   const handleClearData = async () => {
@@ -316,9 +359,21 @@ function App() {
 
   const handleNext = () => {
     if (currentIndex < studySession.length - 1) {
-      resetFlipWithoutAnimation(() => setCurrentIndex(prev => prev + 1));
+      const nextIndex = currentIndex + 1;
+      resetFlipWithoutAnimation(() => setCurrentIndex(nextIndex));
+      // 保存进度
+      const savedProgress = loadReviewProgress();
+      if (savedProgress) {
+        saveReviewProgress({
+          ...savedProgress,
+          currentIndex: nextIndex,
+          cardIds: studySession.map(card => card.id),
+          timestamp: Date.now()
+        });
+      }
     } else {
       if (confirm('Session complete! Return to Library?')) {
+        clearReviewProgress();
         setStep('library');
       }
     }
@@ -326,7 +381,18 @@ function App() {
 
   const handlePrev = () => {
     if (currentIndex > 0) {
-      resetFlipWithoutAnimation(() => setCurrentIndex(prev => prev - 1));
+      const prevIndex = currentIndex - 1;
+      resetFlipWithoutAnimation(() => setCurrentIndex(prevIndex));
+      // 保存进度
+      const savedProgress = loadReviewProgress();
+      if (savedProgress) {
+        saveReviewProgress({
+          ...savedProgress,
+          currentIndex: prevIndex,
+          cardIds: studySession.map(card => card.id),
+          timestamp: Date.now()
+        });
+      }
     }
   };
 
@@ -391,10 +457,20 @@ function App() {
       const newSession = [...studySession];
       newSession.splice(currentIndex, 1);
       newSession.push(currentCard);
+      const newIndex = currentIndex >= newSession.length ? newSession.length - 1 : currentIndex;
       resetFlipWithoutAnimation(() => {
         setStudySession(newSession);
-        if (currentIndex >= newSession.length) {
-          setCurrentIndex(newSession.length - 1);
+        setCurrentIndex(newIndex);
+        
+        // 保存进度
+        const savedProgress = loadReviewProgress();
+        if (savedProgress) {
+          saveReviewProgress({
+            ...savedProgress,
+            currentIndex: newIndex,
+            cardIds: newSession.map(card => card.id),
+            timestamp: Date.now()
+          });
         }
       });
       return;
@@ -487,13 +563,26 @@ function App() {
           onBatchDelete={handleBatchDelete}
           onBatchMove={handleBatchMove}
           onDissolveGroup={handleDissolveGroup}
+          onResumeReview={handleStartReview}
         />
       )}
 
       {step === 'study' && studySession.length > 0 && (
         <div>
           <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '10px', color: '#718096' }}>
-            <button className="btn btn-secondary" style={{ padding: '5px 10px', fontSize: '0.8em' }} onClick={() => setStep('library')}>
+            <button className="btn btn-secondary" style={{ padding: '5px 10px', fontSize: '0.8em' }} onClick={() => {
+              // 保存当前进度
+              const savedProgress = loadReviewProgress();
+              if (savedProgress) {
+                saveReviewProgress({
+                  ...savedProgress,
+                  currentIndex: currentIndex,
+                  cardIds: studySession.map(card => card.id),
+                  timestamp: Date.now()
+                });
+              }
+              setStep('library');
+            }}>
               Exit
             </button>
             <span>Card {currentIndex + 1} / {studySession.length}</span>
