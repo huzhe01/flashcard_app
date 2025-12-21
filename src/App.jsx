@@ -162,8 +162,7 @@ function App() {
     if (user) {
       // Cloud Import
       try {
-        const promises = newCards.map(card => cardService.addCard(card, user));
-        await Promise.all(promises);
+        await cardService.batchAddCards(newCards, user);
         // Refresh data
         const cloudCards = await cardService.getCards(user);
         setAllFlashcards(cloudCards);
@@ -346,13 +345,13 @@ function App() {
 
     try {
       // Simple upload
-      const promises = localCards.map(card => cardService.addCard({
+      const cardsToSync = localCards.map(card => ({
         front: card.front,
         back: card.back,
         tags: [card.category || 'Imported']
-      }, user));
+      }));
 
-      await Promise.all(promises);
+      await cardService.batchAddCards(cardsToSync, user);
       alert('Sync complete!');
 
       // Refresh

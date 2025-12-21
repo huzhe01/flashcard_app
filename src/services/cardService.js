@@ -16,17 +16,37 @@ export const parseCSV = (csvText) => {
 export const cardService = {
     // Fetch cards from Supabase or fallback
     async getCards(user) {
-        if (!user) return []; // Or handle local storage fallback here if we want mixed mode
+        if (!user) return [];
 
-        const { data, error } = await supabase
-            .from('flashcards')
-            .select('*')
-            .order('created_at', { ascending: false });
+        let allData = [];
+        let from = 0;
+        const PAGE_SIZE = 1000;
+        let hasMore = true;
 
-        if (error) throw error;
+        while (hasMore) {
+            const { data, error } = await supabase
+                .from('flashcards')
+                .select('*')
+                .range(from, from + PAGE_SIZE - 1)
+                .order('created_at', { ascending: false });
+
+            if (error) throw error;
+            if (!data || data.length === 0) {
+                hasMore = false;
+                break;
+            }
+
+            allData = [...allData, ...data];
+            
+            if (data.length < PAGE_SIZE) {
+                hasMore = false;
+            } else {
+                from += PAGE_SIZE;
+            }
+        }
 
         // Normalize data for frontend (map tags to category)
-        return data.map(card => ({
+        return allData.map(card => ({
             ...card,
             category: card.tags && card.tags.length > 0 ? card.tags[0] : 'Uncategorized'
         }));
@@ -51,6 +71,28 @@ export const cardService = {
 
         if (error) throw error;
         return data[0];
+    },
+
+    async batchAddCards(cards, user) {
+        if (!user) throw new Error('User must be logged in');
+
+        const payload = cards.map(card => ({
+            user_id: user.id,
+            front: card.front,
+            back: card.back,
+            tags: card.tags || [],
+            review_count: 0
+        }));
+
+        // Split into chunks of 500
+        const CHUNK_SIZE = 500;
+        for (let i = 0; i < payload.length; i += CHUNK_SIZE) {
+            const chunk = payload.slice(i, i + CHUNK_SIZE);
+            const { error } = await supabase
+                .from('flashcards')
+                .insert(chunk);
+            if (error) throw error;
+        }
     },
 
     async updateCard(id, updates) {
