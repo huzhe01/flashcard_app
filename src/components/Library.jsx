@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import TagSidebar from './TagSidebar';
 import RelationshipGraph from './RelationshipGraph';
+import DailyReviewModal from './DailyReviewModal';
 import { loadReviewProgress, clearReviewProgress } from '../utils/storage';
 
 const Library = ({ flashcards, onStartReview, onClearData, user, onSync, onBatchDelete, onBatchMove, onDissolveGroup, onResumeReview }) => {
@@ -18,6 +19,8 @@ const Library = ({ flashcards, onStartReview, onClearData, user, onSync, onBatch
     // SRS State
     const [reviewMode, setReviewMode] = useState('standard'); // 'standard', 'srs'
     const [srsLimit, setSrsLimit] = useState(20);
+    // Daily Review
+    const [showDailyReviewModal, setShowDailyReviewModal] = useState(false);
     const [isMobile, setIsMobile] = useState(() => {
         if (typeof window !== 'undefined') {
             return window.innerWidth <= 768;
@@ -72,6 +75,14 @@ const Library = ({ flashcards, onStartReview, onClearData, user, onSync, onBatch
             difficulty: selectedDifficulty,
             mode: reviewMode,
             limit: srsLimit
+        }, false);
+    };
+
+    const handleDailyReviewStart = (reviewCards) => {
+        clearReviewProgress(); // 开启新每日回顾前清除旧进度
+        onStartReview({
+            mode: 'daily',
+            cards: reviewCards
         }, false);
     };
 
@@ -150,6 +161,15 @@ const Library = ({ flashcards, onStartReview, onClearData, user, onSync, onBatch
 
     return (
         <div className="library-container">
+            {/* 每日回顾模态框 */}
+            {showDailyReviewModal && (
+                <DailyReviewModal
+                    flashcards={flashcards}
+                    onClose={() => setShowDailyReviewModal(false)}
+                    onStartReview={handleDailyReviewStart}
+                />
+            )}
+
             <div style={{
                 display: 'flex',
                 justifyContent: 'center',
@@ -174,6 +194,15 @@ const Library = ({ flashcards, onStartReview, onClearData, user, onSync, onBatch
                     onClick={() => setViewMode('graph')}
                 >
                     🔗 Graph View
+                </button>
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'center', marginBottom: '16px' }}>
+                <button
+                    className="btn daily-review-btn"
+                    onClick={() => setShowDailyReviewModal(true)}
+                >
+                    🎯 每日回顾
                 </button>
             </div>
 

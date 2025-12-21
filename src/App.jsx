@@ -219,8 +219,29 @@ function App() {
 
   const handleStartReview = async (filters, resumeProgress = false) => {
     let sessionCards = [];
+    let savedIndex = 0;
+    let finalSessionCards = [];
 
-    if (filters.mode === 'srs') {
+    if (filters.mode === 'daily') {
+      // Daily Review 使用预先选好的卡片
+      sessionCards = filters.cards || [];
+
+      if (resumeProgress) {
+        const savedProgress = loadReviewProgress();
+        if (savedProgress) {
+          savedIndex = Math.min(savedProgress.currentIndex || 0, Math.max(sessionCards.length - 1, 0));
+          if (savedProgress.cardIds && Array.isArray(savedProgress.cardIds)) {
+            const cardMap = new Map(allFlashcards.map(card => [card.id, card]));
+            const orderedCards = savedProgress.cardIds
+              .map(id => cardMap.get(id))
+              .filter(Boolean);
+            if (orderedCards.length > 0) {
+              sessionCards = orderedCards;
+            }
+          }
+        }
+      }
+    } else if (filters.mode === 'srs') {
       // SRS Mode
       if (user) {
         try {
@@ -259,31 +280,27 @@ function App() {
       return;
     }
 
-    // 如果恢复进度，尝试从存储中加载
-    let savedIndex = 0;
-    let finalSessionCards = sessionCards;
-    
-    if (resumeProgress) {
+    finalSessionCards = sessionCards;
+
+    // 如果恢复进度，尝试从存储中加载（非 daily 模式）
+    if (filters.mode !== 'daily' && resumeProgress) {
       const savedProgress = loadReviewProgress();
       if (savedProgress && savedProgress.filters) {
-        // 检查保存的过滤器是否匹配
-        const filtersMatch = 
+        const filtersMatch =
           savedProgress.filters.mode === filters.mode &&
           savedProgress.filters.category === filters.category &&
           savedProgress.filters.difficulty === filters.difficulty &&
           (filters.mode !== 'srs' || savedProgress.filters.limit === filters.limit);
-        
+
         if (filtersMatch && savedProgress.currentIndex !== undefined) {
           savedIndex = Math.min(savedProgress.currentIndex, sessionCards.length - 1);
-          
-          // 如果保存了卡片ID顺序，尝试恢复原来的顺序
+
           if (savedProgress.cardIds && Array.isArray(savedProgress.cardIds)) {
             const cardMap = new Map(sessionCards.map(card => [card.id, card]));
             const orderedCards = savedProgress.cardIds
               .map(id => cardMap.get(id))
-              .filter(Boolean); // 过滤掉可能已删除的卡片
-            
-            // 如果有有效的有序卡片，使用它们
+              .filter(Boolean);
+
             if (orderedCards.length > 0) {
               finalSessionCards = orderedCards;
             }
