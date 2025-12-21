@@ -155,8 +155,9 @@ export const cardService = {
     },
 
     async batchDelete(ids) {
-        // Split into chunks of 500 to prevent URL/payload limits
-        const CHUNK_SIZE = 500;
+        // Split into chunks of 50 to prevent URL limits (URL length limit is ~2048 chars)
+        // 50 UUIDs is approx 1800 chars, which is safe.
+        const CHUNK_SIZE = 50;
         for (let i = 0; i < ids.length; i += CHUNK_SIZE) {
             const chunk = ids.slice(i, i + CHUNK_SIZE);
             const { error } = await supabase
@@ -168,7 +169,8 @@ export const cardService = {
     },
 
     async batchUpdateCategory(ids, newCategory) {
-        const CHUNK_SIZE = 500;
+        // Update requests also use query params for filtering
+        const CHUNK_SIZE = 50;
         for (let i = 0; i < ids.length; i += CHUNK_SIZE) {
             const chunk = ids.slice(i, i + CHUNK_SIZE);
             const { error } = await supabase

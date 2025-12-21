@@ -187,7 +187,7 @@ function App() {
         setAllFlashcards(cloudCards);
       } catch (e) {
         console.error(e);
-        alert('Batch delete failed');
+        alert(`Batch delete failed: ${e.message}. Partial deletion may have occurred.`);
       }
     } else {
       setAllFlashcards(prev => prev.filter(c => !ids.includes(c.id)));
