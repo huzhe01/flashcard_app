@@ -12,8 +12,8 @@ const TagSidebar = ({ categories, selectedCategory, onSelectCategory, isMobile =
         padding: isMobile ? '15px' : '0 20px 0 0',
         marginRight: isMobile ? '0' : '20px',
         marginBottom: isMobile ? '10px' : '0',
-        maxHeight: isMobile ? 'none' : '80vh',
-        overflowY: isMobile ? 'visible' : 'auto',
+        maxHeight: isMobile ? '30vh' : '80vh',
+        overflowY: 'auto',
         borderRadius: isMobile ? '12px' : '0',
         background: isMobile ? 'rgba(255, 255, 255, 0.65)' : 'transparent',
         boxShadow: isMobile ? '0 4px 12px rgba(0, 0, 0, 0.08)' : 'none'

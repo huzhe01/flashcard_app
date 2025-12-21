@@ -155,18 +155,27 @@ export const cardService = {
     },
 
     async batchDelete(ids) {
-        const { error } = await supabase
-            .from('flashcards')
-            .delete()
-            .in('id', ids);
-        if (error) throw error;
+        // Split into chunks of 500 to prevent URL/payload limits
+        const CHUNK_SIZE = 500;
+        for (let i = 0; i < ids.length; i += CHUNK_SIZE) {
+            const chunk = ids.slice(i, i + CHUNK_SIZE);
+            const { error } = await supabase
+                .from('flashcards')
+                .delete()
+                .in('id', chunk);
+            if (error) throw error;
+        }
     },
 
     async batchUpdateCategory(ids, newCategory) {
-        const { error } = await supabase
-            .from('flashcards')
-            .update({ tags: [newCategory] }) // Assuming single category tag for now
-            .in('id', ids);
-        if (error) throw error;
+        const CHUNK_SIZE = 500;
+        for (let i = 0; i < ids.length; i += CHUNK_SIZE) {
+            const chunk = ids.slice(i, i + CHUNK_SIZE);
+            const { error } = await supabase
+                .from('flashcards')
+                .update({ tags: [newCategory] }) // Assuming single category tag for now
+                .in('id', chunk);
+            if (error) throw error;
+        }
     }
 };

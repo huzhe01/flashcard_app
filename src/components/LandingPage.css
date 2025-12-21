@@ -289,4 +289,13 @@ section {
     .pricing-card.featured {
         transform: scale(1);
     }
-}
+
+    .cta-button {
+        padding: 0.8rem 2rem;
+        font-size: 1rem;
+    }
+
+    .plan-button {
+        padding: 0.8rem;
+        font-size: 1rem;
+    }}
